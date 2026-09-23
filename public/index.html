@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dead Drop — Online</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#f4f4f5;background:#09090b}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#17171b,#09090b 55%);min-height:100vh}
+main{max-width:980px;margin:auto;padding:28px 16px}.panel{background:#111114;border:1px solid #2a2a30;border-radius:18px;padding:20px}
+h1,h2,h3{margin:0}.muted{color:#a1a1aa}.grid{display:grid;gap:16px}.two{grid-template-columns:280px 1fr}@media(max-width:760px){.two{grid-template-columns:1fr}}
+input,button{font:inherit}input{width:100%;background:#0b0b0d;color:#fff;border:1px solid #303038;border-radius:12px;padding:12px}button{background:#e4e4e7;color:#111;border:0;border-radius:12px;padding:12px 16px;font-weight:700;cursor:pointer}button.secondary{background:#202026;color:#fff;border:1px solid #36363d}.row{display:flex;gap:8px;flex-wrap:wrap}.hidden{display:none!important}.code{font-size:32px;letter-spacing:5px;font-weight:800}.role{display:inline-block;border-radius:999px;background:#25252b;padding:5px 9px;font-size:12px;font-weight:800}.chat{height:360px;overflow:auto;background:#0b0b0d;border:1px solid #2b2b31;border-radius:14px;padding:10px}.msg{padding:9px 5px;border-bottom:1px solid #202026}.msg:last-child{border-bottom:0}.msg strong{display:block;font-size:13px}.timer{font-size:28px;font-variant-numeric:tabular-nums}.location{font-size:22px;font-weight:800;padding:12px;border-radius:12px;background:#19191e}.player{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid #25252b}.error{color:#fca5a5;min-height:20px;margin-top:8px}.success{color:#86efac}.option{width:100%;text-align:left;background:#1a1a20;color:#fff;border:1px solid #34343c;margin-top:7px}.option:hover{background:#24242b}
+</style>
+</head>
+<body>
+<main>
+<section id="home" class="panel">
+  <div class="muted">ONLINE MULTIPLAYER PROTOTYPE</div>
+  <h1 style="font-size:38px;margin-top:4px">DEAD DROP</h1>
+  <p class="muted">Three to five spies. One wiretapper. One secret rendezvous.</p>
+  <input id="name" placeholder="Your codename" maxlength="18">
+  <div class="row" style="margin-top:10px">
+    <button id="create">Create room</button>
+    <input id="joinCode" placeholder="ROOM CODE" style="max-width:180px;text-transform:uppercase">
+    <button id="join" class="secondary">Join room</button>
+  </div>
+  <div id="homeError" class="error"></div>
+</section>
+
+<section id="lobby" class="panel hidden">
+  <div class="muted">ROOM</div><div class="code" id="roomCode"></div>
+  <p class="muted">Share this code with your friends. The host starts when 3–5 players are here.</p>
+  <div id="players"></div>
+  <button id="start" style="margin-top:14px">Start operation</button>
+  <div id="lobbyError" class="error"></div>
+</section>
+
+<section id="game" class="hidden">
+  <div class="two grid">
+    <aside class="panel">
+      <div class="row" style="justify-content:space-between;align-items:center"><span id="role" class="role"></span><span id="timer" class="timer">02:00</span></div>
+      <div id="intel" style="margin-top:18px"></div>
+      <div id="guessBox" class="hidden" style="margin-top:18px"></div>
+    </aside>
+    <section class="panel">
+      <div class="row" style="justify-content:space-between"><h2>Encrypted group chat</h2><span class="muted">LIVE</span></div>
+      <div id="chat" class="chat" style="margin-top:12px"></div>
+      <form id="chatForm" class="row" style="margin-top:10px">
+        <input id="message" placeholder="Send a subtle message…" autocomplete="off">
+        <button>Send</button>
+      </form>
+      <div id="gameError" class="error"></div>
+    </section>
+  </div>
+</section>
+
+<section id="result" class="panel hidden" style="margin-top:16px"></section>
+</main>
+
+<script>
+const socket=io();
+let myRole=null,myLocation=null,isHost=false,roomCode=null;
+const $=id=>document.getElementById(id);
+function show(id){$(id).classList.remove('hidden')} function hide(id){$(id).classList.add('hidden')}
+function msgError(el,text){$(el).textContent=text;setTimeout(()=>$(el).textContent='',3500)}
+function fmtTime(s){s=Math.max(0,s|0);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
+$('create').onclick=()=>{const name=$('name').value.trim();if(!name)return msgError('homeError','Enter a codename first.');socket.emit('room:create',{name})};
+$('join').onclick=()=>{const name=$('name').value.trim(),code=$('joinCode').value.trim();if(!name||!code)return msgError('homeError','Enter a codename and room code.');socket.emit('room:join',{name,code})};
+socket.on('error:message',m=>msgError($('game').classList.contains('hidden')?'homeError':'gameError',m));
+socket.on('room:joined',d=>{roomCode=d.code;$('roomCode').textContent=d.code;hide('home');show('lobby')});
+socket.on('room:update',r=>{
+ if(r.code!==roomCode)return;
+ isHost=r.players[0]?.id===socket.id;
+ $('players').innerHTML=r.players.map((p,i)=>'<div class="player"><span>'+esc(p.name)+(i===0?' <small>(host)</small>':'')+'</span><span>'+ (p.ready?'✓':'')+'</span></div>').join('');
+ $('start').disabled=!isHost||r.players.length<3||r.phase!=='lobby';
+ $('start').textContent=r.players.length<3?'Waiting for '+(3-r.players.length)+' more…':'Start operation';
+ if(r.phase==='playing'){hide('lobby');show('game')}
+});
+$('start').onclick=()=>socket.emit('game:start');
+socket.on('game:state',s=>{myRole=s.role;myLocation=s.location;hide('lobby');show('game');hide('result');$('role').textContent=myRole==='Wiretapper'?'WIRETAPPER':'SPY';$('intel').innerHTML=myRole==='Wiretapper'?'<h3>You are the Wiretapper.</h3><p class="muted">Some location words are hidden on your screen. Blend in, infer the rendezvous, then make your guess.</p>':'<h3>Your rendezvous</h3><div class="location">'+esc(myLocation)+'</div><p class="muted">Never say the location directly. Give useful clues without making the destination obvious.</p>';});
+socket.on('timer',s=>$('timer').textContent=fmtTime(s));
+socket.on('chat:reset',()=>{$('chat').innerHTML=''});
+socket.on('chat:message',m=>{const d=document.createElement('div');d.className='msg';d.innerHTML='<strong>'+esc(m.name)+'</strong><div>'+esc(m.text)+'</div>';$('chat').appendChild(d);$('chat').scrollTop=$('chat').scrollHeight});
+$('chatForm').onsubmit=e=>{e.preventDefault();const text=$('message').value.trim();if(text){socket.emit('chat:send',{text});$('message').value=''}};
+function showGuess(){const box=$('guessBox');show('guessBox');box.innerHTML='<h3>Make the intercept</h3><p class="muted">Which rendezvous did the spies agree on?</p>';['Central Station','Riverside Hotel','Old Cinema','Harbor Café','Museum Square','North Bridge','Grand Library','Clocktower Plaza'].sort(()=>Math.random()-.5).forEach(x=>{const b=document.createElement('button');b.className='option';b.textContent=x;b.onclick=()=>socket.emit('game:guess',{location:x});box.appendChild(b)})}
+socket.on('round:end',r=>{hide('game');show('result');$('result').innerHTML=r.disconnected?'<h2>Operation aborted</h2><p class="muted">'+esc(r.message)+'</p>':'<h2>'+(r.wiretapperWon?'WIRETAPPER WINS':'SPIES WIN')+'</h2><p>The rendezvous was <strong>'+esc(r.actualLocation)+'</strong>.</p>'+(r.guess?'<p class="muted">Wiretapper guessed: '+esc(r.guess)+'</p>':'')+'<button id="again" style="margin-top:12px">Play another round</button>';if(r.disconnected)$('result').querySelector('button')?.remove();else $('again').onclick=()=>socket.emit('game:again')});
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]) )}
+// Wiretapper gets the guess panel as soon as the timer expires; in this version the server ends on timeout,
+// so the player can also guess manually by pressing the button added here.
+socket.on('game:state',s=>{if(s.role==='Wiretapper'){setTimeout(()=>{if(!document.getElementById('guessBox').classList.contains('hidden'))return;const b=document.createElement('button');b.textContent='Make final guess';b.style.marginTop='14px';b.onclick=showGuess;$('intel').appendChild(b)},100)}});
+</script>
+</body>
+</html>
